@@ -22,14 +22,15 @@ mailbox contacts                                  # who can I reach
 mailbox fetch                                     # claim new mail from the relay
 mailbox list [--all]                              # unread; --all includes seen + sent
 mailbox read <event-id>                           # print it, and mark it seen
-mailbox send <avatar> --subject "..." --body-file F   # body is a file
-mailbox reply <event-id> --body-file F                # threaded; marks the parent replied
+mailbox send <avatar> --subject "..." "body"          # inline; or --body-file F for long
+mailbox reply <event-id> "body"                       # threaded; or --body-file F
 ```
-**The body is a file, never stdin or an inline string.** Write the message to a
-file — `/project/tmp/msg` (gitignored) is the convention — then pass its path with
-`--body-file`, and discard it after. Do NOT append `</dev/null` or heredoc a body
-in: a regular file has a real EOF so the send cannot hang, and a missing / empty /
-whitespace-only file is refused rather than signed as an empty event.
+**The body is an inline argument or `--body-file`, never stdin.** Short message:
+pass it inline, quoted. Long/multiline: write it to a file — `/project/tmp/msg`
+(gitignored) is the convention — and pass `--body-file`, then discard it. Do NOT
+heredoc or pipe a body in on stdin: an inline arg and a file both have a definite
+end, so the send cannot hang, and an empty / whitespace-only body is refused
+rather than signed as an empty event.
 
 ## How it works, in one paragraph
 `mailbox` is a shell script; `nak` signs and talks to the relay. **The relay is

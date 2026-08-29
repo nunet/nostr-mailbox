@@ -9,23 +9,25 @@ mailbox contacts                                  # who can I reach
 mailbox fetch                                     # claim new mail from the relay
 mailbox list [--all]                              # unread (default), or everything
 mailbox read <event-id>                           # print it; marks it seen
-mailbox send <avatar> --subject "…" --body-file F # body is a file (write it, pass the path)
-mailbox reply <event-id> --body-file F            # threaded, and marks the parent replied
+mailbox send <avatar> --subject "…" "body"        # inline; or --body-file F for a long body
+mailbox reply <event-id> "body"                   # threaded; or --body-file F
 ```
 
-## The body is a file, never stdin
+## The body: inline or a file, never stdin
 
-`send`/`reply` take the message body as `--body-file <path>` — there is no
-stdin body and no inline-string body. Write the body to a file (convention:
-`/project/tmp/…`, gitignored), pass its path, discard it after.
+`send`/`reply` take the body as an **inline argument** for a short message, or
+**`--body-file <path>`** for a long/multiline one (write it to a file —
+convention `/project/tmp/…`, gitignored — pass the path, discard after). There is
+no stdin body; give one source, not both.
 
-This is a correctness decision, not ergonomics. The old `-`/stdin body made the
-send depend on the *caller's* stream having a clean EOF, and the caller is the
-harness shell — which gets it wrong two ways: a stream left open with no EOF made
-`cat` **hang forever**, and an instant EOF made it **sign a valid event over empty
-content**, silent until a human read it. A regular file has an intrinsic EOF, so
-neither can happen; and the body is validated before publish — a missing, empty
-or whitespace-only file is **refused, not sent**.
+This is a correctness decision. The old `-`/stdin body made the send depend on
+the *caller's* stream having a clean EOF, and the caller is the harness shell —
+which gets it wrong two ways: a stream left open with no EOF made `cat` **hang
+forever**, and an instant EOF made it **sign a valid event over empty content**,
+silent until a human read it. An inline argument is argv — it cannot hang and
+cannot EOF — and a file has an intrinsic EOF, so neither failure survives. The
+body is validated before publish: **empty or whitespace-only is refused whichever
+way it arrived**.
 
 ## What it replaces
 
