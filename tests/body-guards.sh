@@ -2,10 +2,10 @@
 # tests/body-guards.sh -- the body is inline or a file (never stdin), and a body
 # that is empty / whitespace-only is refused whichever way it arrived.
 #
-# The refusal cases fail BEFORE any relay call, so they need no relay and no key.
-# The "accepts" cases only assert the body guard let them THROUGH -- the publish
-# itself then fails here (no signing key), which is not a body-guard refusal. A
-# real end-to-end send is covered by live QA, not here.
+# The refusal cases fail BEFORE any relay call. The "accepts" cases only assert
+# the body guard let them THROUGH: the publish then fails against an unreachable
+# relay (pinned below), which is not a body-guard refusal. A real end-to-end send
+# is covered by live QA, not here.
 #
 # Run: tests/body-guards.sh   (exits non-zero if any case fails)
 set -euo pipefail
@@ -26,7 +26,12 @@ JSON
 export MAILBOX_AVATAR="tester"
 export MAILBOX_REGISTRY="$work/registry.json"
 export MAILBOX_ROOT="$work/mail"
-export NOSTR_MAILBOX_NSEC=""   # no key: the "accepts" cases fail at signing, not at the guard
+# Pin the relay to an unreachable address: the "accepts" cases must never touch a
+# real relay. An empty NSEC does NOT error -- nak falls back to a machine default
+# key and would publish -- so the suite's safety has to be its own, not the
+# relay's access control being up to reject an unregistered key.
+export NOSTR_MAILBOX_RELAY="ws://127.0.0.1:1"
+export NOSTR_MAILBOX_NSEC=""
 
 fails=0
 run() { "$mailbox" "$@" </dev/null 2>&1; }   # merged output; never reads stdin
