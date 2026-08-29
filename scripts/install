@@ -26,14 +26,32 @@ run mkdir -p "$AV/tools/nostr-mailbox" "$AV/skills/mailbox"
 run cp "$SRC/mailbox"                   "$AV/tools/nostr-mailbox/mailbox"
 run cp "$SRC/skills/mailbox/SKILL.md"   "$AV/skills/mailbox/SKILL.md"
 
-# registry.json is per-avatar and generated (scripts/build-registry); never clobber
-# one that is already there.
-if [[ -f "$AV/tools/nostr-mailbox/registry.json" ]]; then
+# The address book. Generated, per-avatar, and never clobbered once present -- its
+# holder may extend it. Built from the PUBLIC halves in pass: every avatar that has
+# been minted a key is addressable, and one that has not is not, which is the honest
+# answer rather than a name nothing can be sent to.
+REG="$AV/tools/nostr-mailbox/registry.json"
+if [[ -f "$REG" ]]; then
     echo "  registry.json present, left alone"
-elif [[ -f "$SRC/registry.json" ]]; then
-    run cp "$SRC/registry.json" "$AV/tools/nostr-mailbox/registry.json"
+elif ! command -v pass >/dev/null; then
+    echo "  NOTE: no registry.json and no pass here. Generate it where pass lives:"
+    echo "        scripts/build-registry <avatar...> > $REG"
 else
-    echo "  NOTE: no registry.json -- generate one: scripts/build-registry <avatar...> > $AV/tools/nostr-mailbox/registry.json"
+    : "${PASS_PREFIX:=nunet/avatars}"
+    : "${PASSWORD_STORE_DIR:=$HOME/.password-store}"
+    mapfile -t KEYED < <(
+        for d in "$PASSWORD_STORE_DIR/$PASS_PREFIX"/*/; do
+            [[ -f "$d/nostr-npub.gpg" ]] && basename "$d"
+        done
+    )
+    if (( ${#KEYED[@]} == 0 )); then
+        echo "  NOTE: no minted keys under pass:$PASS_PREFIX -- mint first (scripts/mint-avatar-keys)"
+    elif (( DRY )); then
+        echo "  would write registry.json covering: ${KEYED[*]}"
+    else
+        "$SRC/scripts/build-registry" "${KEYED[@]}" > "$REG"
+        echo "  registry.json written, covering ${#KEYED[@]}: ${KEYED[*]}"
+    fi
 fi
 
 # The symlink is resolved INSIDE the container, so it must point at the container
