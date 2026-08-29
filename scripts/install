@@ -1,15 +1,26 @@
 #!/usr/bin/env bash
 # Install (or re-install) this component into an avatar.
 #
-#   scripts/install <avatar-dir> [--dry-run]
+#   scripts/install <avatar-dir> [--dry-run] [--no-registry]
+#
+# For the whole fleet at once, do not loop over this by hand -- use
+# nostr-relay/scripts/fleet-keys publish, which knows where every avatar lives and
+# calls this for each of them.
 #
 # Re-runnable: it is also how an avatar picks up a fixed component, and how one
 # carrying the old Go-container copy is upgraded.
 set -euo pipefail
 
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
-AV="${1:?usage: install <avatar-dir> [--dry-run]}"
-DRY=0; [[ "${2:-}" == "--dry-run" ]] && DRY=1
+AV="${1:?usage: install <avatar-dir> [--dry-run] [--no-registry]}"; shift
+DRY=0; NOREG=0
+for a in "$@"; do
+    case "$a" in
+        --dry-run)     DRY=1 ;;
+        --no-registry) NOREG=1 ;;   # the caller owns the address book (fleet-keys)
+        *) echo "install: unknown option $a" >&2; exit 2 ;;
+    esac
+done
 [[ -d "$AV/harness" ]] || { echo "install: no harness/ in $AV -- is this an avatar?" >&2; exit 1; }
 
 run() { (( DRY )) && { echo "  $*"; return; }; "$@"; }
@@ -31,7 +42,9 @@ run cp "$SRC/skills/mailbox/SKILL.md"   "$AV/skills/mailbox/SKILL.md"
 # been minted a key is addressable, and one that has not is not, which is the honest
 # answer rather than a name nothing can be sent to.
 REG="$AV/tools/nostr-mailbox/registry.json"
-if [[ -f "$REG" ]]; then
+if (( NOREG )); then
+    :
+elif [[ -f "$REG" ]]; then
     echo "  registry.json present, left alone"
 elif ! command -v pass >/dev/null; then
     echo "  NOTE: no registry.json and no pass here. Generate it where pass lives:"
