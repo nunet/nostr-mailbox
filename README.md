@@ -24,7 +24,8 @@ The container is **dual-homed**: the avatar's docker network (so the CLI reaches
 `:8787`) and the shared `nostr-mailbox-net` (so it reaches the `nostr-relay`). Both
 are **external** to it. It runs as **its own compose project**, never folded into
 the avatar's stack — see `docs/design.md` §3.3 — so a mailbox problem can never stop
-the agent from booting. On start it fetches everything missed since its cursor. Only
+the agent from booting. On start it asks the relay for every message addressed to it
+and archives what it does not already hold. Only
 the relay is always-on.
 
 ```bash
@@ -91,7 +92,7 @@ updated_at }`. `status ∈ {unread, read, considered, postponed, done, sent}`.
 | GET | `/messages/{id}` | — | row + body |
 | POST | `/messages/{id}/status` | `{status, note?}` | ok |
 | GET | `/contacts` | — | registry |
-| GET | `/health` | — | `{ok, relay_connected, cursor}` |
+| GET | `/health` | — | `{ok, relay_connected, indexed}` |
 
 ## Config (env, injected by the harness)
 
@@ -124,21 +125,33 @@ avatar-builder). **Agents never mint keys** — the operator mints per avatar an
 <avatar>…` does that mint-and-store in one step, host-side, with no Go toolchain — the
 private key goes straight into `pass` and only the public parts are printed.
 
-### The `/state` volume and the runtime uid
+### `/state` is a cache, and the runtime uid
 
-`/state` is a **named volume**, and Docker initialises a fresh named volume from the
-image's content at that path — **ownership included**. An image that does not contain
-`/state` therefore yields a root-owned volume, and this container, which runs non-root,
-cannot write `index.json` or its cursor. A compose `user:` line does not fix that; only
-creating the directory in the image does. The same class of bug hit `bdd-runner`'s npm
-cache and `maintainer`'s `/exchange` and `/audit`.
+`/state` holds `index.json` and nothing else. It is a **cache, not a record**: every row
+in it is derivable from `inbox/` and `outbox/`, which carry each message's `event_id` in
+their frontmatter. Delete it and the mailbox rebuilds — nothing is lost, because the two
+things that *are* durable are the relay (every message, until claimed) and the avatar's
+own archive (git-tracked).
 
-So the Dockerfile takes `MAILBOX_UID`/`MAILBOX_GID` build args (default `1000`), creates
-`/state` owned by them, and runs as them. The avatar's compose passes the harness's
-`HOST_UID`/`HOST_GID`, which also makes the `inbox/`/`outbox/` **host binds** writable —
-they are owned by the host user. **The uid is part of the image tag**
-(`go1.22-uid<uid>`), so a host with a different user builds its own image instead of
-silently reusing one whose `/state` belongs to somebody else.
+It used to be a named volume. That made the one derivable thing here the one thing you
+could not read: not greppable, not backed up with the repo, not inspectable without
+docker — while `inbox/` and `outbox/`, which actually matter, were already binds from the
+avatar's directory. It is now `tools/nostr-mailbox/.state/` in the avatar, gitignored.
+`mailboxctl` creates it as the host user before `up`, because a bind path Docker has to
+create itself comes up owned by root.
+
+That was also the last of a recurring bug: a fresh **named volume** is initialised from
+the image's content at that path, ownership included, so an image without `/state` yields
+a root-owned volume that a non-root container cannot write. A compose `user:` line does
+not fix it. The same class of bug hit `bdd-runner`'s npm cache and `maintainer`'s
+`/exchange` and `/audit`. With a bind there is no such initialisation to get wrong.
+
+The Dockerfile still takes `MAILBOX_UID`/`MAILBOX_GID` build args (default `1000`),
+creates `/state` owned by them, and runs as them — the avatar's compose passes the
+harness's `HOST_UID`/`HOST_GID`, which is what makes the `inbox/`/`outbox/` binds
+writable. **The uid is part of the image tag** (`go1.22-uid<uid>`), so a host with a
+different user builds its own image rather than reusing one whose paths belong to
+somebody else.
 
 > Status: v1, pending host-side `go build` + the P4 acceptance run (§12 of the design).
 > The Go here is authored + reviewed in a sandbox without Go/docker; compile shakes out

@@ -2,8 +2,10 @@
 // publishes messages, fetches + archives incoming mail into inbox/, maintains a
 // message-state index, and serves a token-guarded local HTTP API for the CLI.
 //
-// On-demand lifecycle: it comes up with the avatar, fetches everything missed since its
-// cursor, then serves + subscribes live until stopped. Only the relay is always-on.
+// On-demand lifecycle: it comes up, asks the relay for every message addressed to this
+// avatar, archives what it does not already hold, then serves + subscribes live until
+// stopped. Only the relay is always-on -- it is the persistence layer, and this mailbox
+// keeps no durable state of its own.
 package main
 
 import (
@@ -51,7 +53,7 @@ func main() {
 
 	log.Printf("nostr-mailbox up: avatar=%s npub=%s relays=%v", cfg.Avatar, id.Npub, cfg.Relays)
 
-	// Receive loop: fetch-since-cursor + live subscription, with reconnect.
+	// Receive loop: full fetch + live subscription, with reconnect.
 	go mb.receiveLoop(ctx)
 
 	// Local HTTP API.
@@ -70,9 +72,15 @@ func main() {
 	_ = os.Stdout.Sync()
 }
 
-// receiveLoop subscribes for this avatar's mail (kinds 3838/3839, #p == my pubkey) from
-// the cursor onward, and keeps the subscription live, reconnecting on drop. Archiving is
-// idempotent (dedupe by event id), so a refetch after reconnect is harmless.
+// receiveLoop subscribes for this avatar's mail (kinds 3838/3839, #p == my pubkey) and
+// keeps the subscription live, reconnecting on drop.
+//
+// It asks for EVERYTHING, every time -- no since/cursor. A `since` filter is an
+// optimisation that can silently lose mail: it matches on created_at, so a message whose
+// timestamp predates the watermark but which arrives after it (clock skew between hosts,
+// or a relay replaying late) is filtered out and never archived. Refetching costs a
+// bounded amount of traffic on a closed relay; a silently dropped message costs a message.
+// Archiving is idempotent (dedupe by event id), so the refetch is otherwise invisible.
 func (mb *Mailbox) receiveLoop(ctx context.Context) {
 	for ctx.Err() == nil {
 		if !mb.pool.connected() {
@@ -82,13 +90,11 @@ func (mb *Mailbox) receiveLoop(ctx context.Context) {
 				continue
 			}
 		}
-		since := nostr.Timestamp(mb.store.readCursor())
 		filter := nostr.Filter{
 			Kinds: []int{KindMessage, KindReceipt},
 			Tags:  nostr.TagMap{"p": []string{mb.id.PubkeyHex}},
-			Since: &since,
 		}
-		log.Printf("subscribing since=%d", since)
+		log.Printf("subscribing for all mail addressed to %s", mb.cfg.Avatar)
 		for ev := range mb.pool.subscribe(ctx, filter) {
 			mb.handleIncoming(ctx, ev)
 		}

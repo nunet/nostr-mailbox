@@ -36,6 +36,9 @@ export AGENT_NETWORK="${AGENT_NETWORK:-$AVATAR_NAME}"
 export MAILBOX_INBOX_HOST_PATH="$AVATAR_ROOT/inbox"
 export MAILBOX_OUTBOX_HOST_PATH="$AVATAR_ROOT/outbox"
 export MAILBOX_REGISTRY_HOST_PATH="$HERE/registry.json"
+# The index cache. Created here, as the host user: a bind path docker has to create
+# itself comes up owned by root, and the container does not run as root.
+export MAILBOX_STATE_HOST_PATH="${MAILBOX_STATE_HOST_PATH:-$HERE/.state}"
 export HOST_UID="${HOST_UID:-$(id -u)}"
 export HOST_GID="${HOST_GID:-$(id -g)}"
 export MAILBOX_IMAGE="${MAILBOX_IMAGE:-nunet-tools/nostr-mailbox:go1.22-uid$HOST_UID}"
@@ -87,6 +90,7 @@ case "${1:-status}" in
         require_network "$AGENT_NETWORK" "it is the avatar's own network; start the avatar first (./launch-agent up)"
         require_network "${MAILBOX_RELAY_NETWORK:-nostr-mailbox-net}" "it belongs to the tools/nostr-relay component; bring the relay up first"
         [[ -f "$MAILBOX_REGISTRY_HOST_PATH" ]] || die "no registry.json beside this script -- scripts/build-registry generates it"
+        mkdir -p "$MAILBOX_STATE_HOST_PATH"
         load_secrets
         log "starting mailbox-$MAILBOX_AVATAR on $AGENT_NETWORK + ${MAILBOX_RELAY_NETWORK:-nostr-mailbox-net}"
         "${COMPOSE[@]}" up -d

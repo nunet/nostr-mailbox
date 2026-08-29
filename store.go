@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// IndexRow is one message's state (per-avatar, mutable). See README/.mailbox/index.json.
+// IndexRow is one message's state (per-avatar, mutable), held in the index cache.
 type IndexRow struct {
 	Status    string `json:"status"` // unread|read|considered|postponed|done|sent
 	Dir       string `json:"dir"`    // in|out
@@ -24,7 +24,7 @@ type IndexRow struct {
 	Updated   string `json:"updated_at"`
 }
 
-// Store owns .mailbox/index.json and .mailbox/cursor, plus archive-file writing.
+// Store owns index.json in the state dir, plus archive-file writing.
 // All mutations are serialized and persisted immediately (crash-safe enough for v1).
 type Store struct {
 	mu       sync.Mutex
@@ -51,8 +51,16 @@ func openStore(stateDir, inbox, outbox string) (*Store, error) {
 	return s, nil
 }
 
-func (s *Store) indexPath() string  { return filepath.Join(s.stateDir, "index.json") }
-func (s *Store) cursorPath() string { return filepath.Join(s.stateDir, "cursor") }
+func (s *Store) indexPath() string { return filepath.Join(s.stateDir, "index.json") }
+
+// count reports how many messages are indexed. Health reports it in place of the
+// cursor that used to live here: it says something true about this mailbox without
+// implying the index is authoritative -- the archive is.
+func (s *Store) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.index)
+}
 
 // has reports whether an event id is already indexed (idempotent archive / dedupe).
 func (s *Store) has(id string) bool {
@@ -117,21 +125,6 @@ func (s *Store) flushLocked() error {
 		return err
 	}
 	return atomicWrite(s.indexPath(), b, 0o644)
-}
-
-// cursor: last-seen created_at (unix seconds) so a restart refetches only newer events.
-func (s *Store) readCursor() int64 {
-	b, err := os.ReadFile(s.cursorPath())
-	if err != nil {
-		return 0
-	}
-	var ts int64
-	fmt.Sscanf(strings.TrimSpace(string(b)), "%d", &ts)
-	return ts
-}
-
-func (s *Store) writeCursor(ts int64) error {
-	return atomicWrite(s.cursorPath(), []byte(fmt.Sprintf("%d\n", ts)), 0o644)
 }
 
 // archive writes a message to inbox/ (dir=in) or outbox/ (dir=out) with YAML frontmatter,
