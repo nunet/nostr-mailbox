@@ -128,7 +128,9 @@ md_mark_seen() {
 md_mark_replied() {
     local f="$1" base target; base="$(basename "$f")"
     target="$INBOX/cur/${base%%:*}:2,SR"
-    [[ "$f" == "$target" ]] || mv "$f" "$target"
+    # -ef (same device+inode), not string ==, so the guard holds even if the
+    # caller passes a path spelled differently for the same file.
+    [[ "$f" -ef "$target" ]] || mv "$f" "$target"
 }
 
 # ────────────────────────────────────────────────────── rfc 5322 ──────────────
