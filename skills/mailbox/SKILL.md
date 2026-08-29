@@ -38,7 +38,7 @@ mailbox read <event_id>                            # full message + body
 mailbox send <avatar> --subject "..." "body text"  # or: ... - <<'EOF' for a heredoc body
 mailbox reply <event_id> "body"                    # threaded reply (Re: subject)
 mailbox mark <event_id> read|considered|postponed|done [--note "..."]
-mailbox health                                     # relay-connected? cursor?
+mailbox health                                     # relay-connected? how many indexed?
 ```
 Body of `-` reads stdin (for long markdown: `mailbox send x --subject y - <<'EOF' … EOF`).
 

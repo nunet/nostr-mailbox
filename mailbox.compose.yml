@@ -67,10 +67,14 @@ services:
       # boot "read the inbox" habit keep working unchanged.
       - ${MAILBOX_INBOX_HOST_PATH:?}:/mail/inbox
       - ${MAILBOX_OUTBOX_HOST_PATH:?}:/mail/outbox
-      # Per-avatar mutable state: index.json + cursor. The Dockerfile creates
-      # /state owned by the runtime uid -- without that, a fresh named volume comes
-      # up root-owned and the mailbox cannot write.
-      - mailbox-state:/state
+      # Per-avatar index.json -- a CACHE, not a record. It lives in the avatar's own
+      # directory (gitignored) rather than in a named volume, because a volume made
+      # the one derivable thing here the one thing you could not read: not greppable,
+      # not backed up with the repo, not inspectable without docker. Deleting it is
+      # safe -- the relay holds every message and inbox/ + outbox/ hold this avatar's
+      # own record. mailboxctl creates the directory as the host user first, so the
+      # bind is writable (a bind docker creates itself comes up root-owned).
+      - ${MAILBOX_STATE_HOST_PATH:?}:/state
       # The address book -- THIS AVATAR'S OWN COPY, not a mount of one shared
       # original: avatars will not always share a filesystem with each other or
       # with the relay. Writable, because a contact list is something its holder
@@ -82,9 +86,6 @@ services:
       - agent
       - relay
 
-volumes:
-  mailbox-state:
-    name: mailbox-${MAILBOX_AVATAR:?}-state
 
 networks:
   # The AVATAR's own network, owned by the avatar's compose stack -- external

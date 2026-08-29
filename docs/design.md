@@ -147,12 +147,19 @@ Lifecycle: **on-demand** (up with the avatar / started at boot), not a persisten
 daemon. On each start:
 1. Load `nsec`; derive npub; assert it matches this avatar's `registry.json` entry.
 2. Connect to the relay(s) in `NOSTR_MAILBOX_RELAYS` (v1 = the one hub).
-3. **Fetch missed mail:** `REQ` `#p == my pubkey`, kinds `3838`/`3839`, `since=<cursor>`
-   (`.mailbox/cursor`); **dedupe by `event_id`** against the index; for each new one:
-   verify sig, archive to `inbox/` (§6.3), record in the index (§4.6) as `unread`, emit
-   a delivery receipt (§6.2). Advance the cursor.
+3. **Fetch mail:** `REQ` `#p == my pubkey`, kinds `3838`/`3839`, **no `since`**;
+   **dedupe by `event_id`** against the index; for each new one: verify sig, archive to
+   `inbox/` (§6.3), record in the index (§4.6) as `unread`, emit a delivery receipt
+   (§6.2).
 4. Serve the local API; keep the subscription live while up (new mail arrives in
-   real time); on relay drop, reconnect + refetch `since=cursor`.
+   real time); on relay drop, reconnect + refetch.
+
+There is deliberately **no cursor**. A `since` watermark is an optimisation that can
+silently lose mail: it matches on `created_at`, so a message whose timestamp predates the
+watermark but which arrives after it — clock skew between hosts, or a relay replaying
+late — is filtered out and never archived. On a closed relay the cost of asking for
+everything is bounded; the cost of a silently dropped message is a message. Dedupe by
+`event_id` makes the refetch invisible.
 
 **Local HTTP API** (avatar network; **requires `MAILBOX_API_TOKEN`** — §4.5):
 | method | path | body / query | returns |
@@ -162,7 +169,7 @@ daemon. On each start:
 | GET | `/messages/{id}` | — | full message |
 | POST | `/messages/{id}/status` | `{status, note?}` | ok |
 | GET | `/contacts` | — | the registry |
-| GET | `/health` | — | ok · relay-connected · cursor |
+| GET | `/health` | — | ok · relay-connected · indexed |
 
 **Send:** build `kind 3838` (§6.1), sign, publish; write a copy to `outbox/`; index it
 `sent`. Never logs the `nsec`.
@@ -314,9 +321,10 @@ sig: <hex>
 
 ## 7. Delivery semantics
 
-- **Store-and-forward, best-effort.** The always-on relay persists mail; a mailbox that
-  was down **fetches missed events on next start** (`since=<cursor>`, dedupe by
-  `event_id`). No sender-side retry/dedupe machinery in v1.
+- **Store-and-forward, best-effort.** The always-on relay **is** the persistence layer: it
+  holds mail until it is claimed. A mailbox that was down fetches everything addressed to
+  it on next start and dedupes by `event_id`, so it needs no durable state of its own. No
+  sender-side retry/dedupe machinery in v1.
 - **Delivery receipt** (`kind 3839`) auto-emitted on archive — "delivered to the
   mailbox." **Semantic "done" is still a counterpart reply** (or a `mailbox mark … done`),
   as today — the receipt says delivered, not acted-on.
@@ -399,7 +407,7 @@ container-as-key-holder. **Changes, in order:**
 Preconditions: relay up; both avatars have minted keys in `pass`, registry entries, their
 mailbox containers up, `MAILBOX_API_TOKEN` injected.
 
-1. **SE mailbox comes up cold** → `GET /health` returns relay-connected + a cursor;
+1. **SE mailbox comes up cold** → `GET /health` returns relay-connected with `indexed: 0`;
    `mailbox list` is empty. *(proves fetch-on-start with no mail)*
 2. **SE sends to avatar-builder:**
    `mailbox send avatar-builder --subject "mailbox smoke" "ping from SE, please ack"`
@@ -415,8 +423,9 @@ mailbox containers up, `MAILBOX_API_TOKEN` injected.
    threads via `e` tag, lands in SE `inbox/`.
    *(proves list-by-status, read, threaded reply)*
 6. **Offline fetch:** stop avatar-builder's mailbox; SE sends a second message; start
-   avatar-builder's mailbox → on start it **fetches the missed message** (`since=cursor`)
-   and archives it. *(proves store-and-forward for an offline recipient)*
+   avatar-builder's mailbox → on start it **fetches the missed message** from the relay
+   and archives it, while re-fetching the earlier ones without duplicating them.
+   *(proves store-and-forward for an offline recipient, and dedupe on refetch)*
 7. **Status lifecycle:** `mailbox mark <id> postponed --note "after P4"`; a fresh
    `mailbox list --status postponed` shows it. *(proves the message-state index)*
 8. **Tamper negative test:** a hand-mutated event fails signature verification and is
@@ -433,9 +442,12 @@ mailbox containers up, `MAILBOX_API_TOKEN` injected.
 - **Registry lifecycle** — avatar-builder must add a registry entry + inject a key when an
   avatar joins; a missing/mismatched entry must be a loud startup error, not silent
   misdelivery.
-- **Cursor correctness** — a lost/rewound cursor causes refetch; dedupe-by-`event_id`
-  against the index makes refetch harmless (idempotent archive).
-- **Clock skew** on `created_at` across containers — minor; note it.
+- **Refetch cost** — asking for everything on each start is bounded on a closed relay and
+  dedupes by `event_id`. Revisit only if a mailbox's history makes reconnect expensive,
+  and then with a watermark that cannot silently drop (e.g. one derived from the archive,
+  applied as a floor rather than a filter).
+- **Clock skew** on `created_at` across containers — the reason there is no `since`
+  filter (§4.3); still worth watching once avatars sit on different hosts.
 - **Relay-down on send** — policy set in P1 (lean: fail loud + outbox copy written).
 - **External / public-Nostr interop** (NIP-17, unknown-sender trust) — explicitly out of
   scope; the seams are left.

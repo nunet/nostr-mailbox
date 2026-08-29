@@ -121,7 +121,6 @@ func (m *Mailbox) handleIncoming(ctx context.Context, ev *nostr.Event) {
 	}); err != nil {
 		log.Printf("recv %s: index failed: %v", ev.ID, err)
 	}
-	m.advanceCursor(ev.CreatedAt)
 	m.sendReceipt(ctx, ev)
 	log.Printf("recv %s: archived from %s (%q)", shortID(ev.ID), fromName, subject)
 }
@@ -157,11 +156,5 @@ func (m *Mailbox) handleReceipt(ev *nostr.Event) {
 		}
 		_ = m.store.setStatus(orig, row.Status, note)
 	}
-	m.advanceCursor(ev.CreatedAt)
 }
 
-func (m *Mailbox) advanceCursor(ts nostr.Timestamp) {
-	if int64(ts) > m.store.readCursor() {
-		_ = m.store.writeCursor(int64(ts))
-	}
-}

@@ -41,7 +41,7 @@ func (a *API) health(w http.ResponseWriter, r *http.Request) {
 		"ok":              true,
 		"avatar":          a.cfg.Avatar,
 		"relay_connected": a.mb.pool.connected(),
-		"cursor":          a.mb.store.readCursor(),
+		"indexed":         a.mb.store.count(),
 	})
 }
 
