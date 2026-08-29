@@ -6,8 +6,8 @@
 #   mailbox fetch                               claim new mail from the relay
 #   mailbox list [--all]                        unread (default) or everything
 #   mailbox read <event-id>                     print it; marks it seen
-#   mailbox send <avatar> --subject S <body|->  sign + publish
-#   mailbox reply <event-id> <body|->           threaded reply
+#   mailbox send <avatar> --subject S --body-file F   sign + publish (body from a file)
+#   mailbox reply <event-id> --body-file F            threaded reply (body from a file)
 #
 # WHY THERE IS NO DAEMON
 #
@@ -158,7 +158,17 @@ render() { # event JSON on stdin -> RFC 5322 on stdout
 hdr() { sed -n "/^$2:/{s/^$2:[[:space:]]*//;p;q}" "$1"; }
 
 # ───────────────────────────────────────────────────────── commands ───────────
-read_body() { [[ "${1:-}" == "-" ]] && cat || printf '%s' "$1"; }
+# The body is ALWAYS a file, never stdin. A regular file has a real EOF, so
+# reading it can never hang the way a `-`/stdin body could when the caller left
+# the stream open with no EOF -- the failure that once signed a valid event over
+# empty content, silent until a human read it. And an empty body is never
+# intentional, so refuse it here rather than publish nothing.
+require_body_file() { # <path> -- dies if missing / empty / whitespace-only
+    [[ -n "${1:-}" ]] || die "no --body-file -- write the body to a file (e.g. /project/tmp/msg) and pass its path"
+    [[ -f "$1" ]]     || die "body file not found: $1"
+    [[ -s "$1" ]]     || die "refusing to send: body file is empty: $1"
+    grep -q '[^[:space:]]' "$1" || die "refusing to send: body is only whitespace: $1"
+}
 
 cmd_doctor() {
     local ok=0
@@ -226,25 +236,24 @@ cmd_read() {
 }
 
 cmd_send() {
-    [[ $# -ge 1 ]] || die "usage: mailbox send <avatar> --subject S <body|->"
+    [[ $# -ge 1 ]] || die "usage: mailbox send <avatar> --subject S --body-file F"
     local to="$1"; shift
-    local subject="" reply=""
+    local subject="" reply="" body_file=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --subject) subject="$2"; shift 2 ;;
-            --reply)   reply="$2"; shift 2 ;;
-            *)         break ;;
+            --subject)   subject="$2"; shift 2 ;;
+            --reply)     reply="$2"; shift 2 ;;
+            --body-file) body_file="$2"; shift 2 ;;
+            *)           die "unexpected argument '$1' -- the body goes in a file: --body-file F" ;;
         esac
     done
+    require_body_file "$body_file"
     local to_hex
     to_hex="$(jq -r --arg n "$to" '.[$n].pubkey_hex // empty' "$MAILBOX_REGISTRY")"
     [[ -n "$to_hex" ]] || die "unknown recipient $to -- not in the registry; try: mailbox contacts"
     md_init
-    local body ev rc=0
-    body="$(mktemp)"
-    read_body "${1:-}" > "$body"
-    ev="$(nak_publish "$body" "$to_hex" "$subject" "$reply")" || rc=$?
-    rm -f "$body"
+    local ev rc=0
+    ev="$(nak_publish "$body_file" "$to_hex" "$subject" "$reply")" || rc=$?
     (( rc == 0 )) || die "publish failed -- nothing was sent and nothing was archived"
     local id created; id=$(jq -r '.id' <<<"$ev"); created=$(jq -r '.created_at' <<<"$ev")
     printf '%s' "$ev" | render | md_deliver "$SENT" "$id" "$created" "S" cur >/dev/null
@@ -252,7 +261,7 @@ cmd_send() {
 }
 
 cmd_reply() {
-    local f; f="$(md_find "${1:?usage: mailbox reply <event-id> <body|->}")"
+    local f; f="$(md_find "${1:?usage: mailbox reply <event-id> --body-file F}")"
     [[ -n "$f" ]] || die "no message with id ${1}"
     local parent peer subject
     parent="$(hdr "$f" X-Nostr-Event-Id)"
@@ -260,7 +269,7 @@ cmd_reply() {
     subject="$(hdr "$f" Subject)"
     [[ "$subject" == Re:* ]] || subject="Re: $subject"
     shift
-    cmd_send "$peer" --subject "$subject" --reply "$parent" "${1:--}"
+    cmd_send "$peer" --subject "$subject" --reply "$parent" "$@"
     # Replied is a Maildir flag, so the archive records it without a database.
     # Flags are stripped from the BASENAME -- a path may legitimately contain a colon.
     local base; base="$(basename "$f")"
@@ -275,6 +284,6 @@ case "${1:-doctor}" in
     read)     shift; cmd_read "$@" ;;
     send)     shift; cmd_send "$@" ;;
     reply)    shift; cmd_reply "$@" ;;
-    -h|--help|help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' ;;
+    -h|--help|help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' ;;
     *) die "unknown command '$1' (doctor|contacts|fetch|list|read|send|reply)" ;;
 esac

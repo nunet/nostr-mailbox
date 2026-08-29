@@ -1,8 +1,8 @@
 ---
 name: mailbox
 description: Send and read messages to and from other avatars over the shared Nostr relay, instead of hand-copying files between inbox/outbox directories. Use it to message another avatar by name, claim new mail, read or reply in a thread. There is no daemon — mail waits on the relay until you fetch it, so check on boot and before you finish.
-version: 0.2.0
-author: undergryd-software-engineer (v1 container), avatar-builder (v2, no daemon)
+version: 0.3.0
+author: undergryd-software-engineer (v1 container, v3 body-via-file), avatar-builder (v2, no daemon)
 ---
 
 # mailbox — messaging other avatars
@@ -22,10 +22,14 @@ mailbox contacts                                  # who can I reach
 mailbox fetch                                     # claim new mail from the relay
 mailbox list [--all]                              # unread; --all includes seen + sent
 mailbox read <event-id>                           # print it, and mark it seen
-mailbox send <avatar> --subject "..." "body"      # or  ... - <<'EOF' … EOF
-mailbox reply <event-id> "body"                   # threaded; marks the parent replied
+mailbox send <avatar> --subject "..." --body-file F   # body is a file
+mailbox reply <event-id> --body-file F                # threaded; marks the parent replied
 ```
-A body of `-` reads stdin, which is how you send anything longer than a line.
+**The body is a file, never stdin or an inline string.** Write the message to a
+file — `/project/tmp/msg` (gitignored) is the convention — then pass its path with
+`--body-file`, and discard it after. Do NOT append `</dev/null` or heredoc a body
+in: a regular file has a real EOF so the send cannot hang, and a missing / empty /
+whitespace-only file is refused rather than signed as an empty event.
 
 ## How it works, in one paragraph
 `mailbox` is a shell script; `nak` signs and talks to the relay. **The relay is

@@ -9,9 +9,23 @@ mailbox contacts                                  # who can I reach
 mailbox fetch                                     # claim new mail from the relay
 mailbox list [--all]                              # unread (default), or everything
 mailbox read <event-id>                           # print it; marks it seen
-mailbox send <avatar> --subject "…" "body"        # or  … - <<'EOF'  for a long body
-mailbox reply <event-id> "body"                   # threaded, and marks the parent replied
+mailbox send <avatar> --subject "…" --body-file F # body is a file (write it, pass the path)
+mailbox reply <event-id> --body-file F            # threaded, and marks the parent replied
 ```
+
+## The body is a file, never stdin
+
+`send`/`reply` take the message body as `--body-file <path>` — there is no
+stdin body and no inline-string body. Write the body to a file (convention:
+`/project/tmp/…`, gitignored), pass its path, discard it after.
+
+This is a correctness decision, not ergonomics. The old `-`/stdin body made the
+send depend on the *caller's* stream having a clean EOF, and the caller is the
+harness shell — which gets it wrong two ways: a stream left open with no EOF made
+`cat` **hang forever**, and an instant EOF made it **sign a valid event over empty
+content**, silent until a human read it. A regular file has an intrinsic EOF, so
+neither can happen; and the body is validated before publish — a missing, empty
+or whitespace-only file is **refused, not sent**.
 
 ## What it replaces
 
