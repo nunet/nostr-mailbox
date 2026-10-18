@@ -288,6 +288,11 @@ read_all() { # <nak req args...> -> events from every relay, one per line
 nak_fetch_acks() { read_all -k "$KIND_ACK" --tag "p=$MY_PUBKEY"; }      # -> one ack event per line
 nak_fetch()      { read_all -k "$KIND_MESSAGE" --tag "p=$MY_PUBKEY"; }  # -> one event per line
 
+# Team mail is fetched AS the team: NOSTR_SECRET_KEY signs the NIP-42 sign-in,
+# so a gated relay sees the team's own allowlisted key asking for its own mail,
+# never a member asking to read another principal's.
+nak_fetch_team() { NOSTR_SECRET_KEY="$NOSTR_TEAM_NSEC" read_all -k "$KIND_MESSAGE" --tag "p=$TEAM_HEX"; }
+
 nak_verify() { nak verify 2>/dev/null; }                    # event JSON on stdin
 
 # ──────────────────────────────────────────────────────── registry ────────────
@@ -339,6 +344,20 @@ relation() { # <avatar>
 }
 
 mirror() { case "$1" in parent) echo child ;; child) echo parent ;; *) echo "$1" ;; esac; }
+
+# THE TEAM'S OWN MAIL. A team is an address of its own (minted and published by
+# `./fleet team init`), and the lead claims what arrives on it as part of its
+# fetch. The grant is the key, not the view: NOSTR_TEAM_NSEC reaches only the
+# lead's environment, wired host-side like NOSTR_MAILBOX_NSEC, so holding it IS
+# being the claimant. Claimed team mail lands in this maildir like any other
+# message, with To: the team -- render() reads the recipient from the registry.
+TEAM_HEX=""
+if [[ -n "${NOSTR_TEAM_NSEC:-}" ]] && team_has; then
+    _team_name="$(team_get .team)"
+    [[ -n "$_team_name" ]] \
+        && TEAM_HEX="$(jq -r --arg n "$_team_name" '.[$n].pubkey_hex // empty' "$MAILBOX_REGISTRY")"
+    unset _team_name
+fi
 
 # The headers of an archived message, without its body -- a body may quote one.
 headers_of() { sed '/^$/q' "$1"; }
@@ -563,7 +582,15 @@ open_event() { # event JSON on stdin -> event JSON on stdout; fails if it cannot
     fi
     peer="$(jq -r '.pubkey' <<<"$ev")"
     [[ "$peer" == "$MY_HEX" ]] && peer="$(jq -r '(.tags[] | select(.[0]=="p") | .[1]) // ""' <<<"$ev" | head -1)"
-    pt="$(nak_decrypt "$peer" "$(jq -r '.content' <<<"$ev")" 2>/dev/null)" || return 1
+    # Mail addressed to the team opens with the team's key against the sender's.
+    # Our own archived copy of mail TO the team needs no branch: NIP-44 is
+    # symmetric, so our key against the team's address already opens it.
+    local to; to="$(jq -r '(.tags[] | select(.[0]=="p") | .[1]) // ""' <<<"$ev" | head -1)"
+    if [[ -n "$TEAM_HEX" && "$to" == "$TEAM_HEX" && "$(jq -r '.pubkey' <<<"$ev")" != "$MY_HEX" ]]; then
+        pt="$(NOSTR_SECRET_KEY="$NOSTR_TEAM_NSEC" nak_decrypt "$peer" "$(jq -r '.content' <<<"$ev")" 2>/dev/null)" || return 1
+    else
+        pt="$(nak_decrypt "$peer" "$(jq -r '.content' <<<"$ev")" 2>/dev/null)" || return 1
+    fi
     jq -e 'has("subject") and has("body")' <<<"$pt" >/dev/null 2>&1 || return 1
     jq -c --argjson pt "$pt" '.content = $pt.body | .tags += [["subject", $pt.subject]]
         | if ($pt.type | type) == "string" then .tags += [["type", $pt.type]] else . end
@@ -655,6 +682,26 @@ cmd_doctor() {
             printf '  WRONG KEY: derives %s, registry says %s\n' "${derived:-<nak failed>}" "$MY_HEX"; ok=1
         fi
     fi
+    # The team key, where this avatar holds one: it must derive the pubkey the
+    # registry publishes for the team its view names, or team mail is claimed
+    # into ciphertext nobody can open.
+    if [[ -n "${NOSTR_TEAM_NSEC:-}" ]] && command -v nak >/dev/null; then
+        local tname="" thex="" tderived=""
+        team_has && tname="$(team_get .team)"
+        if [[ -z "$tname" ]]; then
+            printf '  BROKEN: NOSTR_TEAM_NSEC is set but %s names no team\n' "$MAILBOX_TEAM"; ok=1
+        else
+            thex="$(jq -r --arg n "$tname" '.[$n].pubkey_hex // empty' "$MAILBOX_REGISTRY")"
+            tderived="$(nak_pubkey "$NOSTR_TEAM_NSEC" 2>/dev/null || true)"
+            if [[ -z "$thex" ]]; then
+                printf '  BROKEN: NOSTR_TEAM_NSEC is set but the registry has no entry for %s -- ./fleet team init publishes it\n' "$tname"; ok=1
+            elif [[ "$tderived" == "$thex" ]]; then
+                say "team key: derives $thex -- this avatar claims mail for $tname"
+            else
+                printf '  WRONG TEAM KEY: derives %s, registry says %s for %s\n' "${tderived:-<nak failed>}" "$thex" "$tname"; ok=1
+            fi
+        fi
+    fi
     say "relays:   from $RELAY_SOURCE, in order of preference"
     local i c
     for i in "${!RELAY_URLS[@]}"; do printf '            %s  %s\n' "${RELAY_NAMES[$i]}" "${RELAY_URLS[$i]}"; done
@@ -702,6 +749,13 @@ cmd_fetch() {
         rm -f "$raw"
         (( rc == RC_TIMEOUT )) && die_rc "$rc" "fetch failed: no relay answered within ${MAILBOX_RELAY_TIMEOUT}s -- nothing was claimed and the maildir is unchanged"
         die_rc "$RC_REFUSED" "fetch failed: no relay could be read -- nothing was claimed and the maildir is unchanged"
+    fi
+    # The lead also claims the team's mail -- the same claim, on the team's
+    # address. A failed team read must not cost the mail fetched above, so it
+    # warns and moves on: what the relay holds waits for the next fetch.
+    if [[ -n "$TEAM_HEX" ]]; then
+        nak_fetch_team >> "$raw" \
+            || warn "team mail could not be read -- it waits on the relay for the next fetch"
     fi
 
     local n=0 dup=0 bad=0 ev id created opened

@@ -228,6 +228,7 @@ was trying to solve by hand, and adopting it is a change of one variable.
 | `jq` | JSON, already present |
 | `MAILBOX_AVATAR` | this avatar's name **as it appears in `registry.json`** |
 | `NOSTR_MAILBOX_NSEC` | the signing key, from `pass`. Passed to `nak` through `NOSTR_SECRET_KEY` and stdin, never as an argument — argv is readable via `/proc`. |
+| `NOSTR_TEAM_NSEC` | optional: the team's key, in the **lead's** environment only. Holding it makes this avatar claim the team's mail on `fetch` (fetched and signed in as the team, opened with its key). `doctor` asserts it derives the registry's entry for the team that `team.json` names. |
 | `relays.json` | the relays to use, beside `registry.json` (see below). Without it, the one local relay `ws://nostr-relay:8080`. |
 | `NOSTR_MAILBOX_RELAY` | one relay URL that overrides `relays.json`, for everything. For debugging. |
 | `MAILBOX_ROOT` | default `<avatar>/mail` |
