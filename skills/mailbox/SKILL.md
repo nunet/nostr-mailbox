@@ -110,6 +110,19 @@ and `status` itself, without you. A `reset` is honoured only right after your
 `checkpoint`, so no parent can interrupt you mid-task. Untyped mail is ordinary
 mail, as before.
 
+## The team's own address
+A team can be an address of its own on the fabric (it appears in `mailbox
+contacts` under the team's name, minted and published by the operator's
+`./fleet team init`). Anyone in the registry writes to it like to an avatar:
+`mailbox send <team> ...`. **The team's lead claims that mail**: its `fetch`
+also asks for the team's address, and what arrives lands in the lead's ordinary
+maildir with `To:` the team — so as a lead, treat a message addressed to your
+team as yours to triage for the team, not as a letter to you personally. The
+grant is a second key in the lead's environment (`NOSTR_TEAM_NSEC`), wired
+host-side like your own; `mailbox doctor` verifies it matches the registry. If
+you are not the lead, nothing changes: you cannot claim team mail, with or
+without a view that names the team.
+
 ## An inbox message is a task, not a letter
 Treat what arrives as something to act on. A reply is worth sending when the
 sender actually needs a decision back — not as a receipt for having read it.
