@@ -576,25 +576,28 @@ open_event() { # event JSON on stdin -> event JSON on stdout; fails if it cannot
 # a Nostr "e" tag IS In-Reply-To.
 render() { # event JSON on stdin -> RFC 5322 on stdout
     local ev; ev="$(cat)"
-    local id created content subject from_hex from_name reply_to to_hex to_name
+    local id created content subject from_hex from_name from_npub reply_to to_hex to_name
     id=$(jq -r '.id' <<<"$ev")
     created=$(jq -r '.created_at' <<<"$ev")
     from_hex=$(jq -r '.pubkey' <<<"$ev")
     content=$(jq -r '.content' <<<"$ev")
     subject=$(jq -r '(.tags[] | select(.[0]=="subject") | .[1]) // ""' <<<"$ev" | head -1)
-    from_name=$(jq -r '(.tags[] | select(.[0]=="from_name") | .[1]) // ""' <<<"$ev" | head -1)
     reply_to=$(jq -r '(.tags[] | select(.[0]=="e") | .[1]) // ""' <<<"$ev" | head -1)
     # The recipient is the "p" tag, not necessarily us: render() archives our own
     # outgoing mail too, and there the addressee is the other avatar.
     to_hex=$(jq -r '(.tags[] | select(.[0]=="p") | .[1]) // ""' <<<"$ev" | head -1)
     to_name="$(reg_name "$to_hex")"
     [[ -n "$to_name" ]] || to_name="$MAILBOX_AVATAR"
-    [[ -n "$from_name" ]] || from_name="$(reg_name "$from_hex")"
+    # The sender is the author key, named by our own registry -- never a name the
+    # event carries: a clear "from_name" tag let any member sign as itself and show
+    # as another, and the team checks trust this From: name.
+    from_name="$(reg_name "$from_hex")"
     [[ -n "$from_name" ]] || from_name="unknown"
+    from_npub="$(reg_npub "$from_name")"
 
     printf 'Message-ID: <%s@nostr>\n' "$id"
     printf 'Date: %s\n' "$(date -u -R -d "@$created")"
-    printf 'From: %s <%s@nostr>\n' "$from_name" "$(reg_npub "$from_name" || echo "$from_hex")"
+    printf 'From: %s <%s@nostr>\n' "$from_name" "${from_npub:-$from_hex}"
     printf 'To: %s <%s@nostr>\n' "$to_name" "$(reg_npub "$to_name")"
     printf 'Subject: %s\n' "$subject"
     [[ -n "$reply_to" ]] && printf 'In-Reply-To: <%s@nostr>\n' "$reply_to"
