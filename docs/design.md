@@ -106,6 +106,9 @@ NIP-01 event. `kind` is the payload-format version.
 - The relay accepts events only from allowlisted pubkeys.
 - The recipient verifies every signature and **fails closed**: an event that does
   not verify is not archived.
+- The sender is the `pubkey`, named by the recipient's own registry (else
+  "unknown"). A `from_name` tag is never read: it would let any member show as
+  another, and the team checks trust the From: name.
 - `registry.json` maps names to identities and **carries no authority**. A message
   is trusted because it verifies.
 - The key a mailbox is given must derive the pubkey `registry.json` claims for that
