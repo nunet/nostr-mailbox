@@ -1085,6 +1085,11 @@ cmd_watch() {
     exec 9>"$WATCH/lock"
     flock -n 9 || die_rc "$RC_LOCKED" "another watcher already runs for $MAILBOX_AVATAR ($WATCH/lock)"
     local handled="$WATCH/handled" held="$WATCH/held"
+    # An install replaces this file, but bash keeps running the code it loaded:
+    # so when the file changes, end here, idle, and let mailbox-watch-start
+    # start the new one.
+    local self="${BASH_SOURCE[0]}" self_was
+    self_was="$(stat -c '%i %Y' "$self")"
     touch "$held"
     # Mail that was already waiting when the first watcher started is the
     # session's, as before; the watcher answers only what arrives after it.
@@ -1162,6 +1167,10 @@ cmd_watch() {
         comm -12 <(sort -u "$held") <(new_ids) | comm -23 - <(sort -u "$handled") > "$held.tmp" && mv "$held.tmp" "$held"
         comm -12 <(sort -u "$handled") <(new_ids) > "$handled.tmp" && mv "$handled.tmp" "$handled"
         [[ -n "${MAILBOX_WATCH_ONCE:-}" ]] && return 0
+        if [[ "$(stat -c '%i %Y' "$self" 2>/dev/null)" != "$self_was" ]]; then
+            watch_log "$self changed on disk; exiting so the new code starts"
+            return 0
+        fi
         sleep "$MAILBOX_WATCH_INTERVAL"
     done
 }
